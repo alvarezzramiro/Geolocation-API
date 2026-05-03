@@ -1,0 +1,48 @@
+// db/cache.go
+package db
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/alvarezzramiro/street-router/graph"
+	"github.com/redis/go-redis/v9"
+)
+
+const cacheTTL = 10 * time.Minute
+
+// cacheKey construye la clave bajo la que se guarda una ruta.
+// Formato: "route:n1:n8"
+func cacheKey(from, to string) string {
+	return fmt.Sprintf("route:%s:%s", from, to)
+}
+
+// GetRoute intenta leer una ruta del caché.
+// Devuelve el resultado y true si existe, o zero-value y false si no.
+func GetRoute(ctx context.Context, rdb *redis.Client, from, to string) (graph.Result, bool) {
+	val, err := rdb.Get(ctx, cacheKey(from, to)).Result()
+	if err != nil {
+		// redis.Nil significa que la clave no existe — es un cache miss normal.
+		// Cualquier otro error también lo tratamos como miss para no bloquear.
+		return graph.Result{}, false
+	}
+
+	var result graph.Result
+	if err := json.Unmarshal([]byte(val), &result); err != nil {
+		return graph.Result{}, false
+	}
+
+	return result, true
+}
+
+// SetRoute guarda una ruta en Redis con TTL de 10 minutos.
+func SetRoute(ctx context.Context, rdb *redis.Client, from, to string, result graph.Result) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("error serializando ruta: %w", err)
+	}
+
+	return rdb.Set(ctx, cacheKey(from, to), data, cacheTTL).Err()
+}
