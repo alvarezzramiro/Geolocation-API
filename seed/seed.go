@@ -89,16 +89,26 @@ func Run(ctx context.Context, driver neo4j.DriverWithContext) error {
 
 			_, err := tx.Run(ctx,
 				`MATCH (a:Intersection {id: $from}), (b:Intersection {id: $to})
-				 CREATE (a)-[:ROAD {
-					name: $name, distance: $distance,
-					speed: $speed, weight: $weight, oneway: $oneway
-				 }]->(b)`,
+				CREATE (a)-[:ROAD {
+					name:            $name,
+					normalized_name: $normalized_name,
+					distance:        $distance,
+					speed:           $speed,
+					weight:          $weight,
+					oneway:          $oneway
+				}]->(b)`,
 				map[string]any{
-					"from": r.FromID, "to": r.ToID, "name": r.Name,
-					"distance": r.Distance, "speed": r.Speed,
-					"weight": w, "oneway": r.Oneway,
+					"from":            r.FromID,
+					"to":              r.ToID,
+					"name":            r.Name,
+					"normalized_name": normalize(r.Name), // nuevo
+					"distance":        r.Distance,
+					"speed":           r.Speed,
+					"weight":          w,
+					"oneway":          r.Oneway,
 				},
 			)
+
 			if err != nil {
 				return nil, err
 			}

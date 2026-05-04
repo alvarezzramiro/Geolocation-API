@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/alvarezzramiro/street-router/config"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -39,23 +40,39 @@ type StreetNode struct {
 	Lon  float64
 }
 
+// db/neo4j.go — agregar
+func normalize(s string) string {
+	s = strings.ToLower(s)
+	replacer := strings.NewReplacer(
+		"á", "a", "é", "e", "í", "i", "ó", "o", "ú", "u",
+		"à", "a", "è", "e", "ì", "i", "ò", "o", "ù", "u",
+		"ä", "a", "ë", "e", "ï", "i", "ö", "o", "ü", "u",
+		"ñ", "n",
+	)
+	return replacer.Replace(s)
+}
+
 func NodeByIntersection(ctx context.Context, driver neo4j.DriverWithContext, street1, street2 string) ([]StreetNode, error) {
 	session := driver.NewSession(ctx, neo4j.SessionConfig{
 		AccessMode: neo4j.AccessModeRead,
 	})
 	defer session.Close(ctx)
 
+	// Normalizamos el input antes de mandarlo a Neo4j
+	norm1 := normalize(street1)
+	norm2 := normalize(street2)
+
 	result, err := session.Run(ctx,
 		`MATCH (n:Intersection)-[r1:ROAD]->()
 		 MATCH (n:Intersection)-[r2:ROAD]->()
-		 WHERE toLower(r1.name) CONTAINS toLower($street1)
-		   AND toLower(r2.name) CONTAINS toLower($street2)
+		 WHERE r1.normalized_name CONTAINS $street1
+		   AND r2.normalized_name CONTAINS $street2
 		   AND r1.name <> r2.name
 		 RETURN DISTINCT n.id AS id, n.name AS name,
 		        n.lat AS lat, n.lon AS lon`,
 		map[string]any{
-			"street1": street1,
-			"street2": street2,
+			"street1": norm1,
+			"street2": norm2,
 		},
 	)
 	if err != nil {

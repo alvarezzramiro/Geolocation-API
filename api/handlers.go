@@ -3,6 +3,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -17,13 +18,29 @@ import (
 // En vez de variables globales, las pasamos explícitamente.
 type Handler struct {
 	graph graph.Graph
+	names graph.NodeNames
 	neo4j neo4j.DriverWithContext
 	redis *redis.Client
 }
 
 // NewHandler construye el Handler con sus dependencias.
-func NewHandler(g graph.Graph, neo4jDriver neo4j.DriverWithContext, rdb *redis.Client) *Handler {
-	return &Handler{graph: g, neo4j: neo4jDriver, redis: rdb}
+func NewHandler(g graph.Graph, names graph.NodeNames, neo4jDriver neo4j.DriverWithContext, rdb *redis.Client) *Handler {
+	return &Handler{graph: g, names: names, neo4j: neo4jDriver, redis: rdb}
+}
+
+// reemplaza los IDs de los steps por nombres legibles
+func (h *Handler) enrichSteps(steps []graph.RouteStep) []map[string]string {
+	result := make([]map[string]string, len(steps))
+	for i, step := range steps {
+		fromName := h.names[step.From]
+		toName := h.names[step.To]
+		result[i] = map[string]string{
+			"from":   fmt.Sprintf("%s (%s)", fromName, step.From),
+			"to":     fmt.Sprintf("%s (%s)", toName, step.To),
+			"street": step.Street,
+		}
+	}
+	return result
 }
 
 // writeJSON serializa v como JSON y lo escribe en la respuesta.
@@ -153,11 +170,10 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 
 	if fromParam == "" || toParam == "" {
 		writeError(w, http.StatusBadRequest,
-			"parámetros requeridos: from='Calle A y Calle B'&to='Calle C y Calle D'")
+			"parámetros requeridos: from='Calle A & Calle B'&to='Calle C & Calle D'")
 		return
 	}
 
-	// Parsear las intersecciones
 	fromStreet1, fromStreet2, err := parseIntersection(fromParam)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "parámetro 'from': "+err.Error())
@@ -172,7 +188,6 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	// Buscar los nodos de cada intersección en Neo4j
 	fromNodes, err := db.NodeByIntersection(ctx, h.neo4j, fromStreet1, fromStreet2)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "origen: "+err.Error())
@@ -185,37 +200,42 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Si hay múltiples candidatos (calle que se cruza dos veces),
-	// tomamos el primero — en práctica urbana casi nunca hay más de uno.
 	fromID := fromNodes[0].ID
 	toID := toNodes[0].ID
 
-	// Caché
+	// Log para verificar que names está poblado
+	log.Printf("names tiene %d entradas", len(h.names))
+	log.Printf("fromID=%s name=%q", fromID, h.names[fromID])
+	log.Printf("toID=%s   name=%q", toID, h.names[toID])
+
+	// Cache HIT — va PRIMERO, antes de calcular nada
 	if cached, ok := db.GetRoute(ctx, h.redis, fromID, toID); ok {
-		log.Printf("cache HIT  %s -> %s", fromID, toID)
+		log.Printf("cache HIT %s -> %s", fromID, toID)
+		compressed := graph.CompressSteps(cached.Steps)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"source": "cache",
 			"resolved": map[string]string{
 				"from": fromNodes[0].Name,
 				"to":   toNodes[0].Name,
 			},
-			"result": cached,
+			"result": map[string]any{
+				"Steps":     h.enrichSteps(compressed),
+				"TotalSecs": math.Round(cached.TotalSecs*10) / 10,
+				"TotalMins": math.Round(cached.TotalSecs/60*10) / 10,
+			},
 		})
 		return
 	}
 
-	// Dijkstra
+	// Cache MISS — calcular con Dijkstra
 	log.Printf("cache MISS %s -> %s", fromID, toID)
-
 	result, err := graph.FindRoute(h.graph, fromID, toID)
-	if err == nil {
-		result.Steps = graph.CompressSteps(result.Steps)
-	}
-
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
+	compressed := graph.CompressSteps(result.Steps)
 
 	if err := db.SetRoute(ctx, h.redis, fromID, toID, result); err != nil {
 		log.Printf("advertencia: no se pudo cachear: %v", err)
@@ -228,7 +248,7 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 			"to":   toNodes[0].Name,
 		},
 		"result": map[string]any{
-			"Steps":     graph.CompressSteps(result.Steps),
+			"Steps":     h.enrichSteps(compressed),
 			"TotalSecs": math.Round(result.TotalSecs*10) / 10,
 			"TotalMins": math.Round(result.TotalSecs/60*10) / 10,
 		},

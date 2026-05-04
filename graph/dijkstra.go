@@ -40,6 +40,8 @@ type Item struct {
 
 type PriorityQueque []*Item
 
+type NodeNames map[string]string
+
 func (pq PriorityQueque) Len() int           { return len(pq) }
 func (pq PriorityQueque) Less(i, j int) bool { return pq[i].cost < pq[j].cost }
 func (pq PriorityQueque) Swap(i, j int)      { pq[i], pq[j] = pq[j], pq[i]; pq[i].idx = i; pq[j].idx = j }
@@ -58,45 +60,61 @@ func (pq *PriorityQueque) Pop() any {
 }
 
 // Se leen todas las relaciones road de neo4j y construye el grafo en memoria.
-func LoadGraph(ctx context.Context, driver neo4j.DriverWithContext) (Graph, error) {
+func LoadGraph(ctx context.Context, driver neo4j.DriverWithContext) (Graph, NodeNames, error) {
 	session := driver.NewSession(ctx, neo4j.SessionConfig{
 		AccessMode: neo4j.AccessModeRead,
 	})
 	defer session.Close(ctx)
 
+	// Query 1: relaciones para el grafo
 	result, err := session.Run(ctx,
 		`MATCH (a:Intersection)-[r:ROAD]->(b:Intersection)
 		 RETURN a.id AS from, b.id AS to, r.weight AS weight, r.name AS street`,
 		nil,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error cargando grafo: %w", err)
+		return nil, nil, fmt.Errorf("error cargando grafo: %w", err)
 	}
 
 	g := make(Graph)
-
 	for result.Next(ctx) {
 		record := result.Record()
-
 		from, _ := record.Get("from")
 		to, _ := record.Get("to")
 		weight, _ := record.Get("weight")
 		street, _ := record.Get("street")
-
 		fromID := from.(string)
-
 		g[fromID] = append(g[fromID], Edge{
 			To:     to.(string),
 			Weight: weight.(float64),
 			Street: street.(string),
 		})
 	}
-
 	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("error leyendo resultados: %w", err)
+		return nil, nil, fmt.Errorf("error leyendo relaciones: %w", err)
 	}
 
-	return g, nil
+	// Query 2: nombres de nodos
+	nameResult, err := session.Run(ctx,
+		`MATCH (n:Intersection) RETURN n.id AS id, n.name AS name`,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error cargando nombres: %w", err)
+	}
+
+	names := make(NodeNames)
+	for nameResult.Next(ctx) {
+		rec := nameResult.Record()
+		id, _ := rec.Get("id")
+		name, _ := rec.Get("name")
+		names[id.(string)] = name.(string)
+	}
+	if err := nameResult.Err(); err != nil {
+		return nil, nil, fmt.Errorf("error leyendo nombres: %w", err)
+	}
+
+	return g, names, nil
 }
 
 // Dijkstra. Devuelve los pasos del camino y el tiempo total en segundos.

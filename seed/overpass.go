@@ -100,8 +100,7 @@ func FetchFromOverpass(ctx context.Context) ([]Intersection, []Road, error) {
 // parseElements separa los elements en nodes y ways,
 // y construye las listas de Intersection y Road.
 func parseElements(elements []overpassElement) ([]Intersection, []Road, error) {
-	// Primero indexamos todos los nodes por su ID de OSM.
-	// Los necesitamos para calcular distancias entre esquinas.
+	// Paso 1: indexar nodes por ID
 	nodeIndex := make(map[int64]osmNode)
 	for _, el := range elements {
 		if el.Type == "node" {
@@ -109,8 +108,32 @@ func parseElements(elements []overpassElement) ([]Intersection, []Road, error) {
 		}
 	}
 
-	// intersectionsSeen evita crear nodos duplicados.
-	// Un mismo node de OSM puede aparecer en múltiples ways.
+	// Paso 2: registrar a qué calles pertenece cada node
+	// map[nodeID] -> lista de nombres de calles que pasan por ese nodo
+	nodeStreets := make(map[int64][]string)
+	for _, el := range elements {
+		if el.Type != "way" {
+			continue
+		}
+		name := el.Tags["name"]
+		if name == "" {
+			continue
+		}
+		for _, nodeID := range el.Nodes {
+			alreadyAdded := false
+			for _, s := range nodeStreets[nodeID] {
+				if s == name {
+					alreadyAdded = true
+					break
+				}
+			}
+			if !alreadyAdded {
+				nodeStreets[nodeID] = append(nodeStreets[nodeID], name)
+			}
+		}
+	}
+
+	// Paso 3: construir intersecciones y roads
 	intersectionsSeen := make(map[int64]bool)
 	var intersections []Intersection
 	var roads []Road
@@ -124,16 +147,9 @@ func parseElements(elements []overpassElement) ([]Intersection, []Road, error) {
 		if name == "" {
 			name = "sin nombre"
 		}
-
-		// Leer velocidad máxima desde OSM.
-		// Si no está definida, usamos 40 km/h como default urbano.
 		speed := parseSpeed(el.Tags["maxspeed"])
-
-		// oneway=yes significa que la calle es de una sola mano.
 		oneway := el.Tags["oneway"] == "yes"
 
-		// Recorremos los pares consecutivos de nodes del way.
-		// Cada par (A, B) es un segmento de calle.
 		for i := 0; i < len(el.Nodes)-1; i++ {
 			fromID := el.Nodes[i]
 			toID := el.Nodes[i+1]
@@ -141,35 +157,32 @@ func parseElements(elements []overpassElement) ([]Intersection, []Road, error) {
 			fromNode, okF := nodeIndex[fromID]
 			toNode, okT := nodeIndex[toID]
 			if !okF || !okT {
-				continue // node fuera del bounding box, lo saltamos
+				continue
 			}
 
-			// Crear nodo origen si no existe todavía
 			if !intersectionsSeen[fromID] {
 				intersectionsSeen[fromID] = true
 				intersections = append(intersections, Intersection{
 					ID:   fmt.Sprintf("osm_%d", fromID),
-					Name: fmt.Sprintf("nodo %d", fromID),
+					Name: buildName(fromID, nodeStreets),
 					Lat:  fromNode.Lat,
 					Lon:  fromNode.Lon,
-					Type: "intersection",
+					Type: intersectionType(fromID, nodeStreets),
 				})
 			}
 
-			// Crear nodo destino si no existe todavía
 			if !intersectionsSeen[toID] {
 				intersectionsSeen[toID] = true
 				intersections = append(intersections, Intersection{
 					ID:   fmt.Sprintf("osm_%d", toID),
-					Name: fmt.Sprintf("nodo %d", toID),
+					Name: buildName(toID, nodeStreets),
 					Lat:  toNode.Lat,
 					Lon:  toNode.Lon,
-					Type: "intersection",
+					Type: intersectionType(toID, nodeStreets),
 				})
 			}
 
 			dist := haversineMeters(fromNode.Lat, fromNode.Lon, toNode.Lat, toNode.Lon)
-
 			roads = append(roads, Road{
 				FromID:   fmt.Sprintf("osm_%d", fromID),
 				ToID:     fmt.Sprintf("osm_%d", toID),
@@ -182,6 +195,30 @@ func parseElements(elements []overpassElement) ([]Intersection, []Road, error) {
 	}
 
 	return intersections, roads, nil
+}
+
+// buildName construye el nombre legible de una intersección.
+// Si el nodo pertenece a dos calles → "Calle A y Calle B"
+// Si pertenece a una sola → el nombre de esa calle
+// Si no tiene calles → "nodo {id}"
+func buildName(nodeID int64, nodeStreets map[int64][]string) string {
+	streets := nodeStreets[nodeID]
+	switch len(streets) {
+	case 0:
+		return fmt.Sprintf("nodo %d", nodeID)
+	case 1:
+		return streets[0]
+	default:
+		return streets[0] + " & " + streets[1]
+	}
+}
+
+// intersectionType determina el tipo según cuántas calles pasan por el nodo.
+func intersectionType(nodeID int64, nodeStreets map[int64][]string) string {
+	if len(nodeStreets[nodeID]) >= 2 {
+		return "intersection"
+	}
+	return "dead_end"
 }
 
 // parseSpeed convierte el string "maxspeed" de OSM a float64.

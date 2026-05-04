@@ -10,7 +10,7 @@ import (
 // en sus dos calles componentes.
 // Acepta " y ", " & ", " / " como separadores.
 func parseIntersection(s string) (street1, street2 string, err error) {
-	separators := []string{" y ", " & ", " / ", " - "}
+	separators := []string{" & ", "&", " / ", " - "}
 
 	for _, sep := range separators {
 		parts := strings.SplitN(strings.ToLower(s), sep, 2)
@@ -24,5 +24,5 @@ func parseIntersection(s string) (street1, street2 string, err error) {
 	}
 
 	return "", "", fmt.Errorf(
-		"formato inválido: %q — usá 'Calle A y Calle B'", s)
+		"formato inválido: %q — usá 'Calle A / Calle B'", s)
 }
