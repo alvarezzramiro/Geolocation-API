@@ -15,14 +15,15 @@ import (
 )
 
 type Handler struct {
-	graph graph.Graph
-	names graph.NodeNames
-	neo4j neo4j.DriverWithContext
-	redis *redis.Client
+	graph  graph.Graph
+	names  graph.NodeNames
+	coords graph.NodeCoords
+	neo4j  neo4j.DriverWithContext
+	redis  *redis.Client
 }
 
-func NewHandler(g graph.Graph, names graph.NodeNames, neo4jDriver neo4j.DriverWithContext, rdb *redis.Client) *Handler {
-	return &Handler{graph: g, names: names, neo4j: neo4jDriver, redis: rdb}
+func NewHandler(g graph.Graph, names graph.NodeNames, coords graph.NodeCoords, neo4jDriver neo4j.DriverWithContext, rdb *redis.Client) *Handler {
+	return &Handler{graph: g, names: names, coords: coords, neo4j: neo4jDriver, redis: rdb}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -54,9 +55,10 @@ func (h *Handler) enrichSteps(steps []graph.RouteStep) []map[string]string {
 func (h *Handler) formatResult(r graph.Result) map[string]any {
 	compressed := graph.CompressSteps(r.Steps)
 	return map[string]any{
-		"Steps":     h.enrichSteps(compressed),
-		"TotalSecs": math.Round(r.TotalSecs*10) / 10,
-		"TotalMins": math.Round(r.TotalSecs/60*10) / 10,
+		"Steps":        h.enrichSteps(compressed),
+		"TotalSecs":    math.Round(r.TotalSecs*10) / 10,
+		"TotalMins":    math.Round(r.TotalSecs/60*10) / 10,
+		"NodesVisited": r.NodesVisited,
 	}
 }
 
@@ -69,7 +71,6 @@ func (h *Handler) GetRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "los parámetros 'from' y 'to' son requeridos")
 		return
 	}
-
 	if _, ok := h.graph[from]; !ok {
 		writeError(w, http.StatusNotFound, "nodo origen no encontrado: "+from)
 		return
@@ -79,31 +80,40 @@ func (h *Handler) GetRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Leer algoritmo al principio — antes del caché
+	algParam := r.URL.Query().Get("algorithm")
+	if algParam == "" {
+		algParam = "dijkstra"
+	}
+
 	ctx := r.Context()
 
-	if cached, ok := repository.GetRoute(ctx, h.redis, from, to); ok {
-		log.Printf("cache HIT  %s -> %s", from, to)
+	if cached, ok := repository.GetRoute(ctx, h.redis, algParam, from, to); ok {
+		log.Printf("cache HIT  [%s] %s -> %s", algParam, from, to)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"source": "cache",
-			"result": h.formatResult(cached),
+			"source":    "cache",
+			"algorithm": algParam,
+			"result":    h.formatResult(cached),
 		})
 		return
 	}
 
-	log.Printf("cache MISS %s -> %s", from, to)
-	result, err := graph.FindRoute(h.graph, from, to)
+	log.Printf("cache MISS [%s] %s -> %s", algParam, from, to)
+	router := graph.NewRouter(graph.Algorithm(algParam))
+	result, err := router.FindRoute(h.graph, h.coords, from, to)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	if err := repository.SetRoute(ctx, h.redis, from, to, result); err != nil {
+	if err := repository.SetRoute(ctx, h.redis, algParam, from, to, result); err != nil {
 		log.Printf("advertencia: no se pudo cachear ruta: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"source": "computed",
-		"result": h.formatResult(result),
+		"source":    "computed",
+		"algorithm": algParam,
+		"result":    h.formatResult(result),
 	})
 }
 
@@ -178,6 +188,12 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Leer algoritmo al principio — antes del caché
+	algParam := r.URL.Query().Get("algorithm")
+	if algParam == "" {
+		algParam = "dijkstra"
+	}
+
 	ctx := r.Context()
 
 	fromNodes, err := repository.NodeByIntersection(ctx, h.neo4j, fromStreet1, fromStreet2)
@@ -195,10 +211,11 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 	fromID := fromNodes[0].ID
 	toID := toNodes[0].ID
 
-	if cached, ok := repository.GetRoute(ctx, h.redis, fromID, toID); ok {
-		log.Printf("cache HIT  %s -> %s", fromID, toID)
+	if cached, ok := repository.GetRoute(ctx, h.redis, algParam, fromID, toID); ok {
+		log.Printf("cache HIT  [%s] %s -> %s", algParam, fromID, toID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"source": "cache",
+			"source":    "cache",
+			"algorithm": algParam,
 			"resolved": map[string]string{
 				"from": fromNodes[0].Name,
 				"to":   toNodes[0].Name,
@@ -208,19 +225,21 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	log.Printf("cache MISS %s -> %s", fromID, toID)
-	result, err := graph.FindRoute(h.graph, fromID, toID)
+	log.Printf("cache MISS [%s] %s -> %s", algParam, fromID, toID)
+	router := graph.NewRouter(graph.Algorithm(algParam))
+	result, err := router.FindRoute(h.graph, h.coords, fromID, toID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	if err := repository.SetRoute(ctx, h.redis, fromID, toID, result); err != nil {
+	if err := repository.SetRoute(ctx, h.redis, algParam, fromID, toID, result); err != nil {
 		log.Printf("advertencia: no se pudo cachear: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"source": "computed",
+		"source":    "computed",
+		"algorithm": algParam,
 		"resolved": map[string]string{
 			"from": fromNodes[0].Name,
 			"to":   toNodes[0].Name,

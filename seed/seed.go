@@ -3,6 +3,7 @@ package seed
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/alvarezzramiro/street-router/internal/text"
@@ -16,9 +17,44 @@ func weight(distance, speed float64) float64 {
 	return distance / (speed * 1000 / 3600)
 }
 
+// hasData verifica si Neo4j ya tiene intersecciones cargadas.
+// Se usa para saltear el seed si los datos ya existen.
+func hasData(ctx context.Context, driver neo4j.DriverWithContext) (bool, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeRead,
+	})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		"MATCH (n:Intersection) RETURN count(n) AS total",
+		nil,
+	)
+	if err != nil {
+		return false, fmt.Errorf("error verificando datos: %w", err)
+	}
+
+	record, err := result.Single(ctx)
+	if err != nil {
+		return false, fmt.Errorf("error leyendo conteo: %w", err)
+	}
+
+	total, _ := record.Get("total")
+	return total.(int64) > 0, nil
+}
+
 // Run ejecuta el seed completo
 // Primero limpia la base, luego carga nodos y relaciones.
 func Run(ctx context.Context, driver neo4j.DriverWithContext) error {
+
+	exists, err := hasData(ctx, driver)
+	if err != nil {
+		return err
+	}
+	if exists {
+		log.Println("Datos ya cargados en Neo4j, saltando seed")
+		return nil
+	}
+
 	log.Println("Descargando mapa desde OpenStreetMap...")
 
 	intersections, roads, err := FetchFromOverpass(ctx)

@@ -13,14 +13,14 @@ import (
 
 const cacheTTL = 10 * time.Minute
 
-func cacheKey(from, to string) string {
-	return fmt.Sprintf("route:%s:%s", from, to)
+func cacheKey(algorithm, from, to string) string {
+	return fmt.Sprintf("route:%s:%s:%s", algorithm, from, to)
 }
 
 // GetRoute intenta leer una ruta del caché de Redis.
 // Devuelve el resultado y true si existe, false si no.
-func GetRoute(ctx context.Context, rdb *redis.Client, from, to string) (graph.Result, bool) {
-	val, err := rdb.Get(ctx, cacheKey(from, to)).Result()
+func GetRoute(ctx context.Context, rdb *redis.Client, algorithm, from, to string) (graph.Result, bool) {
+	val, err := rdb.Get(ctx, cacheKey(algorithm, from, to)).Result()
 	if err != nil {
 		return graph.Result{}, false
 	}
@@ -34,11 +34,11 @@ func GetRoute(ctx context.Context, rdb *redis.Client, from, to string) (graph.Re
 }
 
 // SetRoute guarda una ruta en Redis con TTL de 10 minutos.
-func SetRoute(ctx context.Context, rdb *redis.Client, from, to string, result graph.Result) error {
+func SetRoute(ctx context.Context, rdb *redis.Client, algorithm, from, to string, result graph.Result) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("error serializando ruta: %w", err)
 	}
 
-	return rdb.Set(ctx, cacheKey(from, to), data, cacheTTL).Err()
+	return rdb.Set(ctx, cacheKey(algorithm, from, to), data, cacheTTL).Err()
 }

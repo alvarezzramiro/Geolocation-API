@@ -34,13 +34,13 @@ func main() {
 		log.Fatalf("Error en seed: %v", err)
 	}
 
-	g, names, err := graph.LoadGraph(ctx, neo4jDriver)
+	g, names, coords, err := graph.LoadGraph(ctx, neo4jDriver)
 	if err != nil {
 		log.Fatalf("Error cargando grafo: %v", err)
 	}
 	log.Printf("Grafo cargado: %d nodos", len(g))
 
-	handler := api.NewHandler(g, names, neo4jDriver, redisClient)
+	handler := api.NewHandler(g, names, coords, neo4jDriver, redisClient)
 	router := api.NewRouter(handler)
 
 	log.Printf("Servidor escuchando en http://localhost%s", cfg.ServerAddr)
