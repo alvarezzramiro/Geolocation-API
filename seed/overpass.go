@@ -12,6 +12,23 @@ import (
 	"strings"
 )
 
+type Intersection struct {
+	ID   string
+	Name string
+	Lat  float64
+	Lon  float64
+	Type string // "intersection", "poi", "dead_end"
+}
+
+type Road struct {
+	FromID   string
+	ToID     string
+	Name     string
+	Distance float64 // metros
+	Speed    float64 // km/h permitidos
+	Oneway   bool
+}
+
 // --- Estructuras que mapean la respuesta JSON de Overpass ---
 
 // overpassResponse es el envelope raíz que devuelve la API.
@@ -109,8 +126,8 @@ func parseElements(elements []overpassElement) ([]Intersection, []Road, error) {
 	}
 
 	// Paso 2: registrar a qué calles pertenece cada node
-	// map[nodeID] -> lista de nombres de calles que pasan por ese nodo
-	nodeStreets := make(map[int64][]string)
+	// Usamos map[string]bool como set para deduplicar en O(1)
+	nodeStreetSets := make(map[int64]map[string]bool)
 	for _, el := range elements {
 		if el.Type != "way" {
 			continue
@@ -120,16 +137,18 @@ func parseElements(elements []overpassElement) ([]Intersection, []Road, error) {
 			continue
 		}
 		for _, nodeID := range el.Nodes {
-			alreadyAdded := false
-			for _, s := range nodeStreets[nodeID] {
-				if s == name {
-					alreadyAdded = true
-					break
-				}
+			if nodeStreetSets[nodeID] == nil {
+				nodeStreetSets[nodeID] = make(map[string]bool)
 			}
-			if !alreadyAdded {
-				nodeStreets[nodeID] = append(nodeStreets[nodeID], name)
-			}
+			nodeStreetSets[nodeID][name] = true
+		}
+	}
+
+	// Convertir sets a slices para buildName
+	nodeStreets := make(map[int64][]string)
+	for nodeID, streetSet := range nodeStreetSets {
+		for name := range streetSet {
+			nodeStreets[nodeID] = append(nodeStreets[nodeID], name)
 		}
 	}
 

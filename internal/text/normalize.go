@@ -1,9 +1,10 @@
-// seed/normalize.go
-package seed
+// internal/text/normalize.go
+package text
 
 import "strings"
 
-func normalize(s string) string {
+// Normalize convierte un string a minúsculas y elimina tildes.
+func Normalize(s string) string {
 	s = strings.ToLower(s)
 	replacer := strings.NewReplacer(
 		"á", "a", "é", "e", "í", "i", "ó", "o", "ú", "u",

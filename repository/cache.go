@@ -1,5 +1,5 @@
-// db/cache.go
-package db
+// repository/cache.go
+package repository
 
 import (
 	"context"
@@ -13,19 +13,15 @@ import (
 
 const cacheTTL = 10 * time.Minute
 
-// cacheKey construye la clave bajo la que se guarda una ruta.
-// Formato: "route:n1:n8"
 func cacheKey(from, to string) string {
 	return fmt.Sprintf("route:%s:%s", from, to)
 }
 
-// GetRoute intenta leer una ruta del caché.
-// Devuelve el resultado y true si existe, o zero-value y false si no.
+// GetRoute intenta leer una ruta del caché de Redis.
+// Devuelve el resultado y true si existe, false si no.
 func GetRoute(ctx context.Context, rdb *redis.Client, from, to string) (graph.Result, bool) {
 	val, err := rdb.Get(ctx, cacheKey(from, to)).Result()
 	if err != nil {
-		// redis.Nil significa que la clave no existe — es un cache miss normal.
-		// Cualquier otro error también lo tratamos como miss para no bloquear.
 		return graph.Result{}, false
 	}
 

@@ -5,25 +5,9 @@ import (
 	"context"
 	"log"
 
+	"github.com/alvarezzramiro/street-router/internal/text"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
-
-type Intersection struct {
-	ID   string
-	Name string
-	Lat  float64
-	Lon  float64
-	Type string // "intersection", "poi", "dead_end"
-}
-
-type Road struct {
-	FromID   string
-	ToID     string
-	Name     string
-	Distance float64 // metros
-	Speed    float64 // km/h permitidos
-	Oneway   bool
-}
 
 // weight calcula el tiempo en segundos para recorrer un tramo.
 // dist en metros / veloc en m/s
@@ -87,6 +71,7 @@ func Run(ctx context.Context, driver neo4j.DriverWithContext) error {
 		for _, r := range roads {
 			w := weight(r.Distance, r.Speed)
 
+			// A -> B
 			_, err := tx.Run(ctx,
 				`MATCH (a:Intersection {id: $from}), (b:Intersection {id: $to})
 				CREATE (a)-[:ROAD {
@@ -101,29 +86,38 @@ func Run(ctx context.Context, driver neo4j.DriverWithContext) error {
 					"from":            r.FromID,
 					"to":              r.ToID,
 					"name":            r.Name,
-					"normalized_name": normalize(r.Name), // nuevo
+					"normalized_name": text.Normalize(r.Name),
 					"distance":        r.Distance,
 					"speed":           r.Speed,
 					"weight":          w,
 					"oneway":          r.Oneway,
 				},
 			)
-
 			if err != nil {
 				return nil, err
 			}
 
+			// B -> A — solo si es doble mano
 			if !r.Oneway {
 				_, err := tx.Run(ctx,
 					`MATCH (a:Intersection {id: $from}), (b:Intersection {id: $to})
-					 CREATE (b)-[:ROAD {
-						name: $name, distance: $distance,
-						speed: $speed, weight: $weight, oneway: $oneway
-					 }]->(a)`,
+					CREATE (b)-[:ROAD {
+						name:            $name,
+						normalized_name: $normalized_name,
+						distance:        $distance,
+						speed:           $speed,
+						weight:          $weight,
+						oneway:          $oneway
+					}]->(a)`,
 					map[string]any{
-						"from": r.FromID, "to": r.ToID, "name": r.Name,
-						"distance": r.Distance, "speed": r.Speed,
-						"weight": w, "oneway": r.Oneway,
+						"from":            r.FromID,
+						"to":              r.ToID,
+						"name":            r.Name,
+						"normalized_name": text.Normalize(r.Name),
+						"distance":        r.Distance,
+						"speed":           r.Speed,
+						"weight":          w,
+						"oneway":          r.Oneway,
 					},
 				)
 				if err != nil {

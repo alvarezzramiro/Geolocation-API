@@ -40,17 +40,11 @@ func main() {
 	}
 	log.Printf("Grafo cargado: %d nodos", len(g))
 
-	// Construir handler y router
 	handler := api.NewHandler(g, names, neo4jDriver, redisClient)
 	router := api.NewRouter(handler)
 
-	// Levantar el servidor HTTP
-	addr := ":8080"
-	log.Printf("Servidor escuchando en http://localhost%s", addr)
-	if err := http.ListenAndServe(addr, router); err != nil {
+	log.Printf("Servidor escuchando en http://localhost%s", cfg.ServerAddr)
+	if err := http.ListenAndServe(cfg.ServerAddr, router); err != nil {
 		log.Fatalf("Error en servidor: %v", err)
 	}
-
-	log.Println("  curl http://localhost:8080/nodes | json_pp")
-	log.Println("  curl 'http://localhost:8080/route?from=osm_XXX&to=osm_YYY'")
 }

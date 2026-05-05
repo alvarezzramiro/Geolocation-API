@@ -8,14 +8,12 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/alvarezzramiro/street-router/db"
 	"github.com/alvarezzramiro/street-router/graph"
+	"github.com/alvarezzramiro/street-router/repository"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redis/go-redis/v9"
 )
 
-// Handler agrupa las dependencias que necesitan los endpoints.
-// En vez de variables globales, las pasamos explícitamente.
 type Handler struct {
 	graph graph.Graph
 	names graph.NodeNames
@@ -23,50 +21,55 @@ type Handler struct {
 	redis *redis.Client
 }
 
-// NewHandler construye el Handler con sus dependencias.
 func NewHandler(g graph.Graph, names graph.NodeNames, neo4jDriver neo4j.DriverWithContext, rdb *redis.Client) *Handler {
 	return &Handler{graph: g, names: names, neo4j: neo4jDriver, redis: rdb}
 }
 
-// reemplaza los IDs de los steps por nombres legibles
-func (h *Handler) enrichSteps(steps []graph.RouteStep) []map[string]string {
-	result := make([]map[string]string, len(steps))
-	for i, step := range steps {
-		fromName := h.names[step.From]
-		toName := h.names[step.To]
-		result[i] = map[string]string{
-			"from":   fmt.Sprintf("%s (%s)", fromName, step.From),
-			"to":     fmt.Sprintf("%s (%s)", toName, step.To),
-			"street": step.Street,
-		}
-	}
-	return result
-}
-
-// writeJSON serializa v como JSON y lo escribe en la respuesta.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
 
-// writeError escribe un error como JSON con el formato {"error": "mensaje"}.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// GetRoute maneja GET /route?from=n1&to=n8
+// enrichSteps reemplaza los IDs de los steps por nombres legibles
+// manteniendo el ID entre paréntesis para referencia.
+func (h *Handler) enrichSteps(steps []graph.RouteStep) []map[string]string {
+	result := make([]map[string]string, len(steps))
+	for i, step := range steps {
+		result[i] = map[string]string{
+			"from":   fmt.Sprintf("%s (%s)", h.names[step.From], step.From),
+			"to":     fmt.Sprintf("%s (%s)", h.names[step.To], step.To),
+			"street": step.Street,
+		}
+	}
+	return result
+}
+
+// formatResult construye la respuesta final de una ruta de forma consistente.
+// Usado por todos los handlers para garantizar el mismo formato.
+func (h *Handler) formatResult(r graph.Result) map[string]any {
+	compressed := graph.CompressSteps(r.Steps)
+	return map[string]any{
+		"Steps":     h.enrichSteps(compressed),
+		"TotalSecs": math.Round(r.TotalSecs*10) / 10,
+		"TotalMins": math.Round(r.TotalSecs/60*10) / 10,
+	}
+}
+
+// GetRoute maneja GET /route?from=osm_XXX&to=osm_YYY
 func (h *Handler) GetRoute(w http.ResponseWriter, r *http.Request) {
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 
-	// Validar que los parámetros estén presentes
 	if from == "" || to == "" {
 		writeError(w, http.StatusBadRequest, "los parámetros 'from' y 'to' son requeridos")
 		return
 	}
 
-	// Validar que los nodos existen en el grafo
 	if _, ok := h.graph[from]; !ok {
 		writeError(w, http.StatusNotFound, "nodo origen no encontrado: "+from)
 		return
@@ -78,41 +81,33 @@ func (h *Handler) GetRoute(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// 1. Intentar leer desde caché
-	if cached, ok := db.GetRoute(ctx, h.redis, from, to); ok {
+	if cached, ok := repository.GetRoute(ctx, h.redis, from, to); ok {
 		log.Printf("cache HIT  %s -> %s", from, to)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"source": "cache",
-			"result": cached,
+			"result": h.formatResult(cached),
 		})
 		return
 	}
 
-	// 2. Cache miss — calcular con Dijkstra
 	log.Printf("cache MISS %s -> %s", from, to)
 	result, err := graph.FindRoute(h.graph, from, to)
-	if err == nil {
-		result.Steps = graph.CompressSteps(result.Steps)
-	}
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	// 3. Guardar en caché para la próxima vez
-	if err := db.SetRoute(ctx, h.redis, from, to, result); err != nil {
-		// Un error de caché no es fatal — respondemos igual
+	if err := repository.SetRoute(ctx, h.redis, from, to, result); err != nil {
 		log.Printf("advertencia: no se pudo cachear ruta: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"source": "computed",
-		"result": result,
+		"result": h.formatResult(result),
 	})
 }
 
-// GetNodes maneja GET /nodes — devuelve todos los nodos del grafo.
-// Útil para saber qué IDs usar en /route.
+// GetNodes maneja GET /nodes
 func (h *Handler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	session := h.neo4j.NewSession(r.Context(), neo4j.SessionConfig{
 		AccessMode: neo4j.AccessModeRead,
@@ -147,7 +142,6 @@ func (h *Handler) GetNodes(w http.ResponseWriter, r *http.Request) {
 		typ, _ := rec.Get("type")
 		lat, _ := rec.Get("lat")
 		lon, _ := rec.Get("lon")
-
 		nodes = append(nodes, Node{
 			ID:   id.(string),
 			Name: name.(string),
@@ -160,17 +154,15 @@ func (h *Handler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nodes)
 }
 
-// api/handlers.go — agregar debajo de GetRouteByName (o reemplazarlo)
-
 // GetRouteByIntersection maneja:
-// GET /route/by-intersection?from=San+Martín+y+Pinto&to=9+de+Julio+y+Rodriguez
+// GET /route/by-intersection?from=Calle A/Calle B&to=Calle C/Calle D
 func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request) {
 	fromParam := r.URL.Query().Get("from")
 	toParam := r.URL.Query().Get("to")
 
 	if fromParam == "" || toParam == "" {
 		writeError(w, http.StatusBadRequest,
-			"parámetros requeridos: from='Calle A & Calle B'&to='Calle C & Calle D'")
+			"parámetros requeridos: from='Calle A/Calle B'&to='Calle C/Calle D'")
 		return
 	}
 
@@ -188,13 +180,13 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	fromNodes, err := db.NodeByIntersection(ctx, h.neo4j, fromStreet1, fromStreet2)
+	fromNodes, err := repository.NodeByIntersection(ctx, h.neo4j, fromStreet1, fromStreet2)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "origen: "+err.Error())
 		return
 	}
 
-	toNodes, err := db.NodeByIntersection(ctx, h.neo4j, toStreet1, toStreet2)
+	toNodes, err := repository.NodeByIntersection(ctx, h.neo4j, toStreet1, toStreet2)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "destino: "+err.Error())
 		return
@@ -203,31 +195,19 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 	fromID := fromNodes[0].ID
 	toID := toNodes[0].ID
 
-	// Log para verificar que names está poblado
-	log.Printf("names tiene %d entradas", len(h.names))
-	log.Printf("fromID=%s name=%q", fromID, h.names[fromID])
-	log.Printf("toID=%s   name=%q", toID, h.names[toID])
-
-	// Cache HIT — va PRIMERO, antes de calcular nada
-	if cached, ok := db.GetRoute(ctx, h.redis, fromID, toID); ok {
-		log.Printf("cache HIT %s -> %s", fromID, toID)
-		compressed := graph.CompressSteps(cached.Steps)
+	if cached, ok := repository.GetRoute(ctx, h.redis, fromID, toID); ok {
+		log.Printf("cache HIT  %s -> %s", fromID, toID)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"source": "cache",
 			"resolved": map[string]string{
 				"from": fromNodes[0].Name,
 				"to":   toNodes[0].Name,
 			},
-			"result": map[string]any{
-				"Steps":     h.enrichSteps(compressed),
-				"TotalSecs": math.Round(cached.TotalSecs*10) / 10,
-				"TotalMins": math.Round(cached.TotalSecs/60*10) / 10,
-			},
+			"result": h.formatResult(cached),
 		})
 		return
 	}
 
-	// Cache MISS — calcular con Dijkstra
 	log.Printf("cache MISS %s -> %s", fromID, toID)
 	result, err := graph.FindRoute(h.graph, fromID, toID)
 	if err != nil {
@@ -235,9 +215,7 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	compressed := graph.CompressSteps(result.Steps)
-
-	if err := db.SetRoute(ctx, h.redis, fromID, toID, result); err != nil {
+	if err := repository.SetRoute(ctx, h.redis, fromID, toID, result); err != nil {
 		log.Printf("advertencia: no se pudo cachear: %v", err)
 	}
 
@@ -247,10 +225,6 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 			"from": fromNodes[0].Name,
 			"to":   toNodes[0].Name,
 		},
-		"result": map[string]any{
-			"Steps":     h.enrichSteps(compressed),
-			"TotalSecs": math.Round(result.TotalSecs*10) / 10,
-			"TotalMins": math.Round(result.TotalSecs/60*10) / 10,
-		},
+		"result": h.formatResult(result),
 	})
 }

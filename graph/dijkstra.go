@@ -35,22 +35,17 @@ type Result struct {
 type Item struct {
 	id   string  // id del nodo
 	cost float64 // costo acumulado hasta el nodo
-	idx  int     // pos interna en el heap
 }
 
-type PriorityQueque []*Item
+type PriorityQueue []*Item
 
 type NodeNames map[string]string
 
-func (pq PriorityQueque) Len() int           { return len(pq) }
-func (pq PriorityQueque) Less(i, j int) bool { return pq[i].cost < pq[j].cost }
-func (pq PriorityQueque) Swap(i, j int)      { pq[i], pq[j] = pq[j], pq[i]; pq[i].idx = i; pq[j].idx = j }
-func (pq *PriorityQueque) Push(x any) {
-	item := x.(*Item)
-	item.idx = len(*pq)
-	*pq = append(*pq, item)
-}
-func (pq *PriorityQueque) Pop() any {
+func (pq PriorityQueue) Len() int           { return len(pq) }
+func (pq PriorityQueue) Less(i, j int) bool { return pq[i].cost < pq[j].cost }
+func (pq PriorityQueue) Swap(i, j int)      { pq[i], pq[j] = pq[j], pq[i] }
+func (pq *PriorityQueue) Push(x any)        { *pq = append(*pq, x.(*Item)) }
+func (pq *PriorityQueue) Pop() any {
 	old := *pq
 	n := len(old)
 	item := old[n-1]
@@ -135,7 +130,7 @@ func FindRoute(g Graph, start, end string) (Result, error) {
 	}
 	prev := make(map[string]Arrival)
 
-	pq := &PriorityQueque{}
+	pq := &PriorityQueue{}
 	heap.Init(pq)
 	heap.Push(pq, &Item{id: start, cost: 0})
 
