@@ -28,6 +28,7 @@ func NewHandler(g graph.Graph, names graph.NodeNames, coords graph.NodeCoords, n
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
@@ -246,4 +247,24 @@ func (h *Handler) GetRouteByIntersection(w http.ResponseWriter, r *http.Request)
 		},
 		"result": h.formatResult(result),
 	})
+}
+
+// GetStreets maneja GET /streets y GET /streets?q=san
+// Devuelve la lista de calles disponibles en el grafo,
+// opcionalmente filtradas por el parámetro q.
+func (h *Handler) GetStreets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+
+	streets, err := repository.Streets(r.Context(), h.neo4j, q)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "error consultando calles")
+		return
+	}
+
+	// Devolvemos array vacío en vez de null si no hay resultados
+	if streets == nil {
+		streets = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, streets)
 }

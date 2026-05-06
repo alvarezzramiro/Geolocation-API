@@ -17,6 +17,7 @@ func NewRouter(h *Handler) http.Handler {
 	r.Use(middleware.Recoverer) // si un handler hace panic, responde 500 en vez de crashear
 
 	r.Get("/nodes", h.GetNodes)
+	r.Get("/streets", h.GetStreets)
 	r.Get("/route", h.GetRoute)
 	r.Get("/route/by-intersection", h.GetRouteByIntersection)
 

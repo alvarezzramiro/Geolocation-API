@@ -21,7 +21,8 @@ func (r *AStarRouter) FindRoute(g Graph, coords NodeCoords, start, end string) (
 
 type astarItem struct {
 	id string
-	f  float64 // f = g + h  (costo acumulado + heurística)
+	g  float64 // costo real acumulado desde start
+	f  float64 // f = g + h
 }
 
 type astarPQ []*astarItem
@@ -41,21 +42,18 @@ func (pq *astarPQ) Pop() any {
 
 // --- Heurística ---
 
-// heuristic estima el costo restante desde un nodo hasta el destino.
-// Usa la distancia Haversine dividida por la velocidad máxima asumida
-// para obtener una estimación en segundos — la misma unidad que los weights.
-// Es admisible (nunca sobreestima) porque asume movimiento en línea recta
-// a la velocidad máxima posible.
+// heuristic estima el costo restante desde un nodo hasta el destino
+// en segundos, asumiendo movimiento en línea recta a velocidad máxima urbana.
+// Es admisible — nunca sobreestima — porque ninguna ruta real puede ser
+// más corta que la línea recta ni más rápida que la velocidad máxima.
 func heuristic(coords NodeCoords, from, to string) float64 {
 	f, okF := coords[from]
 	t, okT := coords[to]
 	if !okF || !okT {
-		return 0 // si no hay coords, degradamos a Dijkstra
+		return 0
 	}
-
-	const maxSpeedMS = 50.0 / 3.6 // 50 km/h en m/s — velocidad máxima urbana
-	dist := haversine(f[0], f[1], t[0], t[1])
-	return dist / maxSpeedMS
+	const maxSpeedMS = 50.0 / 3.6
+	return haversine(f[0], f[1], t[0], t[1]) / maxSpeedMS
 }
 
 // haversine calcula la distancia en metros entre dos puntos GPS.
@@ -72,7 +70,7 @@ func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 // --- Algoritmo ---
 
 func astar(g Graph, coords NodeCoords, start, end string) (Result, error) {
-	// g: costo acumulado real desde start hasta cada nodo
+	// gCost: menor costo real conocido para llegar a cada nodo
 	gCost := make(map[string]float64)
 	for id := range g {
 		gCost[id] = math.Inf(1)
@@ -86,7 +84,8 @@ func astar(g Graph, coords NodeCoords, start, end string) (Result, error) {
 	heap.Init(pq)
 	heap.Push(pq, &astarItem{
 		id: start,
-		f:  heuristic(coords, start, end), // f inicial = 0 + h
+		g:  0,
+		f:  heuristic(coords, start, end),
 	})
 
 	for pq.Len() > 0 {
@@ -96,8 +95,10 @@ func astar(g Graph, coords NodeCoords, start, end string) (Result, error) {
 			break
 		}
 
-		// Salteamos items obsoletos — mismo patrón que Dijkstra
-		if curr.f > gCost[curr.id]+heuristic(coords, curr.id, end) {
+		// Descartar items obsoletos comparando el gCost del item
+		// contra el mejor gCost conocido para ese nodo.
+		// Si el item tiene un gCost mayor, ya encontramos un camino mejor.
+		if curr.g > gCost[curr.id] {
 			continue
 		}
 
@@ -109,10 +110,11 @@ func astar(g Graph, coords NodeCoords, start, end string) (Result, error) {
 			if newG < gCost[edge.To] {
 				gCost[edge.To] = newG
 				prev[edge.To] = arrival{from: curr.id, street: edge.Street}
-
-				// f = costo real acumulado + estimación al destino
-				f := newG + heuristic(coords, edge.To, end)
-				heap.Push(pq, &astarItem{id: edge.To, f: f})
+				heap.Push(pq, &astarItem{
+					id: edge.To,
+					g:  newG,
+					f:  newG + heuristic(coords, edge.To, end),
+				})
 			}
 		}
 	}

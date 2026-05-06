@@ -70,3 +70,45 @@ func NodeByIntersection(ctx context.Context, driver neo4j.DriverWithContext, str
 
 	return nodes, nil
 }
+
+// Streets devuelve todos los nombres de calles unicos del grafo.
+func Streets(ctx context.Context, driver neo4j.DriverWithContext, q string) ([]string, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeRead,
+	})
+	defer session.Close(ctx)
+
+	var query string
+	var params map[string]any
+
+	if q == "" {
+		query = `MATCH ()-[r:ROAD]->()
+		         RETURN DISTINCT r.name AS name
+		         ORDER BY name`
+		params = nil
+	} else {
+		query = `MATCH ()-[r:ROAD]->()
+		         WHERE toLower(r.name) CONTAINS toLower($q)
+		         RETURN DISTINCT r.name AS name
+		         ORDER BY name`
+		params = map[string]any{"q": q}
+	}
+
+	result, err := session.Run(ctx, query, params)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando calles: %w", err)
+	}
+
+	var streets []string
+	for result.Next(ctx) {
+		rec := result.Record()
+		name, _ := rec.Get("name")
+		streets = append(streets, name.(string))
+	}
+
+	if err := result.Err(); err != nil {
+		return nil, err
+	}
+
+	return streets, nil
+}
