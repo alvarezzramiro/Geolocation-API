@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/alvarezzramiro/street-router/config"
+	"github.com/alvarezzramiro/Geolocation-API/config"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 

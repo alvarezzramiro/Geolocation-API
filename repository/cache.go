@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alvarezzramiro/street-router/graph"
+	"github.com/alvarezzramiro/Geolocation-API/graph"
 	"github.com/redis/go-redis/v9"
 )
 

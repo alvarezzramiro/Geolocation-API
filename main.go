@@ -6,11 +6,11 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/alvarezzramiro/street-router/api"
-	"github.com/alvarezzramiro/street-router/config"
-	"github.com/alvarezzramiro/street-router/db"
-	"github.com/alvarezzramiro/street-router/graph"
-	"github.com/alvarezzramiro/street-router/seed"
+	"github.com/alvarezzramiro/Geolocation-API/api"
+	"github.com/alvarezzramiro/Geolocation-API/config"
+	"github.com/alvarezzramiro/Geolocation-API/db"
+	"github.com/alvarezzramiro/Geolocation-API/graph"
+	"github.com/alvarezzramiro/Geolocation-API/seed"
 )
 
 func main() {

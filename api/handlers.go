@@ -8,8 +8,8 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/alvarezzramiro/street-router/graph"
-	"github.com/alvarezzramiro/street-router/repository"
+	"github.com/alvarezzramiro/Geolocation-API/graph"
+	"github.com/alvarezzramiro/Geolocation-API/repository"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redis/go-redis/v9"
 )

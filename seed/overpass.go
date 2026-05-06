@@ -92,7 +92,7 @@ func FetchFromOverpass(ctx context.Context) ([]Intersection, []Road, error) {
 
 	// Con el body como form, el Content-Type correcto es este.
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "street-router/1.0 (portfolio project)")
+	req.Header.Set("User-Agent", "Geolocation-API/1.0 (portfolio project)")
 	req.Header.Set("Accept", "*/*")
 
 	resp, err := http.DefaultClient.Do(req)

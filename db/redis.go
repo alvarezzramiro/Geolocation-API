@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/alvarezzramiro/street-router/config"
+	"github.com/alvarezzramiro/Geolocation-API/config"
 	"github.com/redis/go-redis/v9"
 )
 
