@@ -5,12 +5,17 @@ services:
     container_name: street-neo4j
     ports:
       - "7474:7474"   # Interfaz web (Neo4j Browser)
-      - "7687:7687"   # Protocolo Bolt (lo usa el driver de Go)
+      - "7687:7687"   # Protocolo Bolt
     environment:
       - NEO4J_AUTH=neo4j/password123
       - NEO4J_PLUGINS=["graph-data-science"]
     volumes:
       - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password123", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7.2-alpine
@@ -19,6 +24,28 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  
+  app:
+    build: .
+    container_name: street-app
+    ports:
+      - "8080:8080"
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password123
+      - REDIS_ADDR=redis:6379
+      - SERVER_ADDR=:8080
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   neo4j_data:
